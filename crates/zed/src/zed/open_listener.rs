@@ -93,6 +93,8 @@ impl OpenRequest {
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
+            } else if url.starts_with("wsl://") {
+                this.parse_wsl_file_path(&url)?
             } else if let Some(extension_id) = url.strip_prefix("zed://extension/") {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
@@ -153,6 +155,42 @@ impl OpenRequest {
             );
         }
         self.remote_connection = Some(connection_options);
+        self.parse_file_path(url.path());
+        Ok(())
+    }
+
+    fn parse_wsl_file_path(&mut self, file: &str) -> Result<()> {
+        let url = url::Url::parse(file)?;
+        let distro_name = url
+            .host_str()
+            .with_context(|| format!("missing distro in wsl url: {file}"))?;
+        let username = Some(url.username().to_string()).filter(|s| !s.is_empty());
+
+        let mut connection_options = WslConnectionOptions {
+            distro_name: distro_name.to_string(),
+            user: username,
+        };
+
+        match &self.remote_connection {
+            Some(RemoteConnectionOptions::Wsl(existing)) => {
+                anyhow::ensure!(
+                    existing.distro_name == connection_options.distro_name,
+                    "cannot open multiple different remote connections"
+                );
+                if existing.user.is_some() {
+                    connection_options.user = existing.user.clone();
+                }
+            }
+            Some(_) => anyhow::bail!("cannot open multiple different remote connections"),
+            None => {
+                anyhow::ensure!(
+                    self.open_paths.is_empty(),
+                    "cannot open both local and wsl paths"
+                );
+            }
+        }
+
+        self.remote_connection = Some(RemoteConnectionOptions::Wsl(connection_options.clone()));
         self.parse_file_path(url.path());
         Ok(())
     }
@@ -655,7 +693,7 @@ mod tests {
     use editor::Editor;
     use gpui::TestAppContext;
     use language::LineEnding;
-    use remote::SshConnectionOptions;
+    use remote::{SshConnectionOptions, WslConnectionOptions};
     use rope::Rope;
     use serde_json::json;
     use std::sync::Arc;
@@ -689,6 +727,54 @@ mod tests {
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);
+    }
+
+    #[gpui::test]
+    fn test_parse_wsl_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["wsl://Ubuntu/home/alice/project".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert_eq!(
+            request.remote_connection.unwrap(),
+            RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".into(),
+                user: None,
+            })
+        );
+        assert_eq!(request.open_paths, vec!["/home/alice/project"]);
+    }
+
+    #[gpui::test]
+    fn test_parse_wsl_url_with_user_and_encoded_path(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["wsl://bob@Ubuntu/home/bob/with%20space".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert_eq!(
+            request.remote_connection.unwrap(),
+            RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".into(),
+                user: Some("bob".into()),
+            })
+        );
+        assert_eq!(request.open_paths, vec!["/home/bob/with space"]);
     }
 
     #[gpui::test]

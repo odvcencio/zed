@@ -584,4 +584,37 @@ pub mod wsl_actions {
         #[serde(default)]
         pub create_new_window: bool,
     }
+
+    /// Connect to WSL using the default distribution.
+    #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+    #[action(namespace = wsl)]
+    #[serde(deny_unknown_fields)]
+    pub struct ConnectToWsl {
+        #[serde(default)]
+        pub create_new_window: bool,
+    }
+
+    /// Connect to WSL by selecting a specific distribution.
+    #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+    #[action(namespace = wsl)]
+    #[serde(deny_unknown_fields)]
+    pub struct ConnectToWslUsingDistro {
+        #[serde(default)]
+        pub create_new_window: bool,
+    }
+
+    /// Reopen the current folder in WSL.
+    #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+    #[action(namespace = wsl)]
+    #[serde(deny_unknown_fields)]
+    pub struct ReopenFolderInWsl {
+        #[serde(default)]
+        pub create_new_window: bool,
+    }
+
+    /// Disconnect from the current WSL session.
+    #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+    #[action(namespace = wsl)]
+    #[serde(deny_unknown_fields)]
+    pub struct DisconnectWsl {}
 }

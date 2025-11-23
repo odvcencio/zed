@@ -24,7 +24,9 @@ use util::paths::PathWithPosition;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
 
-const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
+const URL_PREFIX: [&'static str; 6] = [
+    "zed://", "http://", "https://", "file://", "ssh://", "wsl://",
+];
 
 struct Detect;
 
@@ -106,8 +108,19 @@ struct Args {
     ///
     /// WARN: You should not fill in this field by hand.
     #[cfg(target_os = "windows")]
-    #[arg(long, value_name = "USER@DISTRO")]
+    #[arg(long, value_name = "USER@DISTRO", hide = true)]
     wsl: Option<String>,
+    /// Open paths in a remote context. Supports WSL on Windows.
+    ///
+    /// Format for WSL: `wsl+<distro>` or `wsl+<distro>+<user>`
+    ///
+    /// Examples:
+    ///   - `zed --remote wsl+Ubuntu-24.04 ~/project`
+    ///   - `zed --remote wsl+Ubuntu-24.04+myuser ~/project`
+    ///   - `zed --remote wsl ~/project` (uses default distro)
+    #[cfg(target_os = "windows")]
+    #[arg(long, value_name = "REMOTE")]
+    remote: Option<String>,
     /// Not supported in Zed CLI, only supported on Zed binary
     /// Will attempt to give the correct command to run
     #[arg(long)]
@@ -127,6 +140,56 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
+}
+
+#[cfg(target_os = "windows")]
+fn parse_remote_or_wsl_arg(
+    remote: Option<&str>,
+    wsl: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    if let Some(remote_str) = remote {
+        if let Some(wsl_part) = remote_str.strip_prefix("wsl+") {
+            if wsl_part.is_empty() || wsl_part == "wsl" {
+                anyhow::bail!(
+                    "Invalid --remote format. Use 'wsl+<distro>' or 'wsl+<distro>+<user>'"
+                );
+            }
+
+            let parts: Vec<&str> = wsl_part.split('+').collect();
+            match parts.len() {
+                1 => {
+                    let distro = parts[0];
+                    Ok(Some(distro.to_string()))
+                }
+                2 => {
+                    let distro = parts[0];
+                    let user = parts[1];
+                    if user.is_empty() {
+                        anyhow::bail!("User cannot be empty in --remote wsl+<distro>+<user>");
+                    }
+                    Ok(Some(format!("{}@{}", user, distro)))
+                }
+                _ => {
+                    anyhow::bail!(
+                        "Invalid --remote format. Use 'wsl+<distro>' or 'wsl+<distro>+<user>'"
+                    );
+                }
+            }
+        } else if remote_str == "wsl" {
+            anyhow::bail!(
+                "Please specify a WSL distribution: use 'wsl+<distro>' instead of just 'wsl'"
+            );
+            #[allow(unreachable_code)]
+            Ok(Some("".to_string()))
+        } else {
+            anyhow::bail!(
+                "Unsupported --remote format: '{}'. Currently only 'wsl', 'wsl+<distro>', or 'wsl+<distro>+<user>' are supported.",
+                remote_str
+            );
+        }
+    } else {
+        Ok(wsl.map(|s| s.to_string()))
+    }
 }
 
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
@@ -179,13 +242,19 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
         .arg(distro_name)
         .arg("--exec")
         .arg("wslpath")
-        .arg("-m")
+        .arg("-a")
+        .arg("-u")
         .arg(&source.path)
         .output()?;
 
+    anyhow::ensure!(
+        output.status.success(),
+        "failed converting WSL path: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     let result = String::from_utf8_lossy(&output.stdout);
-    let prefix = format!("//wsl.localhost/{}", distro_name);
-    source.path = Path::new(result.trim().strip_prefix(&prefix).unwrap_or(&result)).to_owned();
+    source.path = Path::new(result.trim()).to_owned();
 
     Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
 }
@@ -327,7 +396,7 @@ fn main() -> Result<()> {
     }
 
     #[cfg(target_os = "windows")]
-    let wsl = args.wsl.as_ref();
+    let wsl = parse_remote_or_wsl_arg(args.remote.as_deref(), args.wsl.as_deref())?;
     #[cfg(not(target_os = "windows"))]
     let wsl = None;
 

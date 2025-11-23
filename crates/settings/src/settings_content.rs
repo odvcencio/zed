@@ -890,6 +890,8 @@ pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub wsl_connections: Option<Vec<WslConnection>>,
     pub read_ssh_config: Option<bool>,
+    /// The default WSL distribution to use when connecting without specifying a distro.
+    pub default_wsl_distro: Option<String>,
 }
 
 #[with_fallible_options]

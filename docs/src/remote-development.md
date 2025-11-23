@@ -99,15 +99,192 @@ When prompted for credentials, use the graphical askpass dialog. If it doesn't a
 
 ## WSL Support
 
-Zed supports opening folders inside of WSL natively on Windows.
+Zed supports opening folders inside Windows Subsystem for Linux (WSL) natively on Windows. This allows you to develop Linux projects while using the Windows version of Zed, with full language server, terminal, and Git support running in the Linux environment.
 
-### Opening a local folder in WSL
+> **Note:** WSL 2 is recommended for best performance. WSL 1 is supported but may require additional configuration for file watching.
 
-To open a local folder inside a WSL container, use the `projects: open in wsl` action and select the folder you want to open. You will be presented with a list of available WSL distributions to open the folder in.
+### Getting Started
 
-### Opening a folder already in WSL
+**Prerequisites:**
 
-To open a folder that's already located inside of a WSL container, use the `projects: open wsl` action and select the WSL distribution. The distribution will be added to the `Remote Projects` window where you will be able to open the folder.
+1. Windows 10 version 2004+ or Windows 11
+2. WSL 2 installed (recommended) or WSL 1
+3. At least one Linux distribution installed via WSL
+4. Zed for Windows installed
+
+### Opening Projects in WSL
+
+Zed provides multiple ways to open WSL projects:
+
+**Method 1: Command Palette Actions**
+
+- **`wsl: connect to wsl`** - Quick connect using your default WSL distribution (requires `default_wsl_distro` setting)
+- **`wsl: connect to wsl using distro`** - Select a specific WSL distribution from a picker
+- **`wsl: reopen folder in wsl`** - Reopen your current local folder inside a WSL distribution
+- **`projects: open folder in wsl`** - Select a Windows folder to open inside WSL
+- **`projects: open wsl`** - Browse and open projects stored in WSL
+
+**Method 2: Command Line**
+
+From Windows PowerShell or Command Prompt:
+
+```bash
+# Using wsl:// URL scheme
+zed wsl://Ubuntu-24.04/home/username/project
+
+# Using --remote flag (more flexible)
+zed --remote wsl+Ubuntu-24.04 ~/project
+zed --remote wsl+Ubuntu-24.04+myuser ~/project
+
+# Specify user with @ syntax in URL
+zed wsl://myuser@Ubuntu-24.04/home/username/project
+```
+
+From inside a WSL distribution:
+
+```bash
+# Zed automatically detects WSL and converts paths
+zed .
+zed ~/myproject
+zed /home/username/project
+```
+
+### Configuration
+
+WSL connections can be configured in your settings file {#kb zed::OpenSettings}:
+
+```json [settings]
+{
+  "remote": {
+    "default_wsl_distro": "Ubuntu-24.04",
+    "wsl_connections": [
+      {
+        "distro_name": "Ubuntu-24.04",
+        "projects": [
+          { "paths": ["/home/username/myproject"] }
+        ]
+      },
+      {
+        "distro_name": "Debian",
+        "user": "devuser",
+        "projects": [
+          { "paths": ["/home/devuser/work"] }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Configuration Options:**
+
+- **`default_wsl_distro`** - The default distribution to use for `wsl: connect to wsl` action and `--remote wsl` CLI commands
+- **`distro_name`** - The name of the WSL distribution (as shown in `wsl -l`)
+- **`user`** - Optional: Specify a user to connect as (defaults to your default WSL user)
+- **`projects`** - Optional: List of project paths to show in the Remote Projects panel
+
+### Architecture and Network Sharing
+
+WSL connections work differently from SSH connections:
+
+- Zed uploads a lightweight server binary to `~/.zed_server/` in your WSL distribution
+- The server runs inside the Linux environment and handles all file operations, language servers, and terminals
+- **Network interface is shared** between Windows and WSL, so localhost ports are accessible from both sides
+- No port forwarding configuration is needed (unlike SSH remoting)
+
+### Troubleshooting
+
+#### File Watching Issues (WSL 1)
+
+WSL 1 has known limitations with inotify-based file watching. If you notice that file changes aren't being detected:
+
+1. Verify you're using WSL 2: `wsl -l -v` (should show version 2)
+2. If you must use WSL 1, file watching will use native Windows notifications, which may be slower for large projects
+
+#### Connection Hangs or Fails
+
+If connections hang during setup:
+
+1. Ensure `wsl.exe` is on your Windows PATH
+2. Verify your distribution is running: `wsl -d Ubuntu-24.04 echo "test"`
+3. Check Zed logs {#kb zed::OpenTelemetryLog} for detailed error messages
+
+#### Server Binary Download Failures
+
+The server binary downloads from `https://zed.dev` on first connection. If this fails:
+
+1. Check your network/firewall settings
+2. Ensure the WSL distribution has internet access
+3. Check the logs for specific error messages
+
+#### Slow Performance
+
+For best performance:
+
+1. Use WSL 2 (much faster than WSL 1)
+2. Store your project files in the Linux filesystem (`/home/username/`), not Windows filesystem (`/mnt/c/`)
+3. Large projects (>100,000 files) may be slow - consider opening specific subdirectories
+
+#### Path Not Found Errors
+
+When opening Windows paths in WSL:
+
+- Zed automatically converts Windows paths like `C:\Users\Name\project` to `/mnt/c/Users/Name/project`
+- Network shares (`\\wsl.localhost\` paths) are not currently supported - use direct Linux paths instead
+
+#### Wrong User or Distribution
+
+If you're connected to the wrong user/distribution:
+
+1. Use `wsl: disconnect` action to close the connection
+2. Reconnect using `wsl: connect to wsl using distro` to select the correct distribution
+3. Specify the user in the URL: `wsl://myuser@Ubuntu/path`
+
+### Known Limitations
+
+- **Port forwarding configuration**: Not applicable (network is shared with Windows)
+- **WSL 1 file watching**: May be slower than WSL 2
+- **Network paths**: Opening `\\wsl.localhost\` paths from Windows Explorer is not supported - use command palette actions instead
+- **Very large directories**: Opening `/` or `~` with >100,000 files may be slow
+
+### Command Line Reference
+
+**URL Schemes:**
+
+```bash
+# Basic format
+zed wsl://DISTRO/path/to/folder
+
+# With username
+zed wsl://USER@DISTRO/path/to/folder
+
+# Examples
+zed wsl://Ubuntu-24.04/home/alice/project
+zed wsl://bob@Debian/home/bob/work
+```
+
+**--remote Flag:**
+
+```bash
+# Basic format
+zed --remote wsl+DISTRO path
+
+# With username
+zed --remote wsl+DISTRO+USER path
+
+# Examples
+zed --remote wsl+Ubuntu-24.04 ~/project
+zed --remote wsl+Ubuntu-24.04+alice /home/alice/project
+```
+
+### Disconnecting from WSL
+
+To disconnect from a WSL session:
+
+1. Use the `wsl: disconnect` action in the command palette
+2. Or close the Zed window (will prompt to save unsaved changes)
+
+Your unsaved changes are stored locally on Windows and will be restored when you reconnect to the same project.
 
 ## Port forwarding
 

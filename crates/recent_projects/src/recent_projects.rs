@@ -128,6 +128,177 @@ pub fn init(cx: &mut App) {
         });
     });
 
+    #[cfg(target_os = "windows")]
+    cx.on_action(
+        |action: &zed_actions::wsl_actions::ConnectToWslUsingDistro, cx| {
+            let create_new_window = action.create_new_window;
+            with_active_or_new_workspace(cx, move |workspace, window, cx| {
+                let handle = cx.entity().downgrade();
+                let fs = workspace.project().read(cx).fs().clone();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    RemoteServerProjects::wsl(create_new_window, fs, window, handle, cx)
+                });
+            });
+        },
+    );
+
+    #[cfg(target_os = "windows")]
+    cx.on_action(|action: &zed_actions::wsl_actions::ConnectToWsl, cx| {
+        let create_new_window = action.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let app_state = workspace.app_state().clone();
+            let fs = workspace.project().read(cx).fs().clone();
+
+            let ssh_settings = SshSettings::get_global(cx);
+            let default_distro = ssh_settings.default_wsl_distro.clone();
+
+            if default_distro.is_empty() {
+                cx.spawn_in(window, |_, cx| async move {
+                    let _ = cx
+                        .prompt(
+                            gpui::PromptLevel::Info,
+                            "No default WSL distribution",
+                            Some("Set a default WSL distribution in settings or use 'wsl: connect to wsl using distro' to select one."),
+                            &["Ok"],
+                        )
+                        .await;
+                })
+                .detach();
+                return;
+            }
+
+            let distro = remote::WslConnectionOptions {
+                distro_name: default_distro,
+                user: None,
+            };
+
+            add_wsl_distro(fs, &distro, cx);
+
+            let open_options = OpenOptions {
+                replace_window: if create_new_window {
+                    None
+                } else {
+                    window.window_handle().downcast::<Workspace>()
+                },
+                ..Default::default()
+            };
+
+            cx.spawn_in(window, async move |_, cx| {
+                open_remote_project(
+                    RemoteConnectionOptions::Wsl(distro),
+                    vec![],
+                    app_state,
+                    open_options,
+                    cx,
+                )
+                .await
+            })
+            .detach();
+        });
+    });
+
+    #[cfg(target_os = "windows")]
+    cx.on_action(|action: &zed_actions::wsl_actions::ReopenFolderInWsl, cx| {
+        let create_new_window = action.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let project = workspace.project().read(cx);
+
+            if project.is_remote() {
+                cx.spawn_in(window, |_, cx| async move {
+                    let _ = cx
+                        .prompt(
+                            gpui::PromptLevel::Info,
+                            "Already in remote workspace",
+                            Some("This workspace is already connected remotely."),
+                            &["Ok"],
+                        )
+                        .await;
+                })
+                .detach();
+                return;
+            }
+
+            let paths = project
+                .worktree_root_names(cx)
+                .map(|name| std::path::PathBuf::from(name))
+                .collect::<Vec<_>>();
+
+            if paths.is_empty() {
+                cx.spawn_in(window, |_, cx| async move {
+                    let _ = cx
+                        .prompt(
+                            gpui::PromptLevel::Info,
+                            "No folder open",
+                            Some("Open a folder first before reopening in WSL."),
+                            &["Ok"],
+                        )
+                        .await;
+                })
+                .detach();
+                return;
+            }
+
+            drop(project);
+
+            workspace.toggle_modal(window, cx, |window, cx| {
+                crate::wsl_picker::WslOpenModal::new(paths, create_new_window, window, cx)
+            });
+        });
+    });
+
+    #[cfg(target_os = "windows")]
+    cx.on_action(|_: &zed_actions::wsl_actions::DisconnectWsl, cx| {
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let project = workspace.project().read(cx);
+
+            if !project.is_remote() {
+                cx.spawn_in(window, |_, cx| async move {
+                    let _ = cx
+                        .prompt(
+                            gpui::PromptLevel::Info,
+                            "Not connected to WSL",
+                            Some("This workspace is not connected to a remote WSL session."),
+                            &["Ok"],
+                        )
+                        .await;
+                })
+                .detach();
+                return;
+            }
+
+            let is_wsl = matches!(
+                project.remote_connection_options(cx),
+                Some(RemoteConnectionOptions::Wsl(_))
+            );
+
+            drop(project);
+
+            if !is_wsl {
+                cx.spawn_in(window, |_, cx| async move {
+                    let _ = cx
+                        .prompt(
+                            gpui::PromptLevel::Info,
+                            "Not connected to WSL",
+                            Some("This workspace is connected via SSH, not WSL."),
+                            &["Ok"],
+                        )
+                        .await;
+                })
+                .detach();
+                return;
+            }
+
+            workspace.close_window(
+                &workspace::CloseWindow {
+                    allow_cancel: true,
+                    quit: false,
+                },
+                window,
+                cx,
+            );
+        });
+    });
+
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {

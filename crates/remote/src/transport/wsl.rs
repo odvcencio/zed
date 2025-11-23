@@ -85,20 +85,28 @@ impl WslRemoteConnection {
             .await
             .context("failed detecting shell")?;
         log::info!("Remote shell discovered: {}", this.shell);
+
+        delegate.set_status(Some("Detecting WSL capabilities"), cx);
         this.shell_kind = ShellKind::new(&this.shell, false);
         this.can_exec = this.detect_can_exec().await;
         log::info!("Remote can exec: {}", this.can_exec);
+
+        delegate.set_status(Some("Detecting WSL platform"), cx);
         this.platform = this
             .detect_platform()
             .await
             .context("failed detecting platform")?;
         log::info!("Remote platform discovered: {:?}", this.platform);
+
+        delegate.set_status(Some("Preparing server binary"), cx);
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
                 .await
                 .context("failed ensuring server binary")?,
         );
         log::debug!("Detected WSL environment: {this:#?}");
+
+        delegate.set_status(Some("WSL environment ready"), cx);
 
         Ok(this)
     }

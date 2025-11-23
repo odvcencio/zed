@@ -38,6 +38,8 @@ pub struct SshSettings {
     pub wsl_connections: ExtendingVec<WslConnection>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     pub read_ssh_config: bool,
+    /// The default WSL distribution to use when connecting without specifying a distro.
+    pub default_wsl_distro: String,
 }
 
 impl SshSettings {
@@ -115,6 +117,7 @@ impl Settings for SshSettings {
             ssh_connections: remote.ssh_connections.clone().unwrap_or_default().into(),
             wsl_connections: remote.wsl_connections.clone().unwrap_or_default().into(),
             read_ssh_config: remote.read_ssh_config.unwrap(),
+            default_wsl_distro: remote.default_wsl_distro.clone().unwrap_or_default(),
         }
     }
 }
@@ -124,6 +127,7 @@ pub struct RemoteConnectionPrompt {
     nickname: Option<SharedString>,
     is_wsl: bool,
     status_message: Option<SharedString>,
+    progress_percentage: Option<f32>,
     prompt: Option<(Entity<Markdown>, oneshot::Sender<EncryptedPassword>)>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: Entity<Editor>,
@@ -157,6 +161,7 @@ impl RemoteConnectionPrompt {
             is_wsl,
             editor: cx.new(|cx| Editor::single_line(window, cx)),
             status_message: None,
+            progress_percentage: None,
             cancellation: None,
             prompt: None,
         }
@@ -206,6 +211,17 @@ impl RemoteConnectionPrompt {
         cx.notify();
     }
 
+    pub fn set_status_with_progress(
+        &mut self,
+        status: Option<String>,
+        progress: Option<f32>,
+        cx: &mut Context<Self>,
+    ) {
+        self.status_message = status.map(|s| s.into());
+        self.progress_percentage = progress;
+        cx.notify();
+    }
+
     pub fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
             self.status_message = Some("Connecting".into());
@@ -250,19 +266,45 @@ impl Render for RemoteConnectionPrompt {
             .text_buffer(cx)
             .when_some(self.status_message.clone(), |el, status_message| {
                 el.child(
-                    h_flex()
-                        .gap_1()
+                    v_flex()
+                        .gap_2()
                         .child(
-                            Icon::new(IconName::ArrowCircle)
-                                .size(IconSize::Medium)
-                                .with_rotate_animation(2),
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::Medium)
+                                        .with_rotate_animation(2),
+                                )
+                                .child(
+                                    div()
+                                        .text_ellipsis()
+                                        .overflow_x_hidden()
+                                        .child(format!("{}…", status_message)),
+                                )
+                                .when_some(self.progress_percentage, |el, progress| {
+                                    el.child(
+                                        div()
+                                            .ml_2()
+                                            .text_color(cx.theme().colors().text_muted)
+                                            .child(format!("{}%", (progress * 100.0) as u32)),
+                                    )
+                                }),
                         )
-                        .child(
-                            div()
-                                .text_ellipsis()
-                                .overflow_x_hidden()
-                                .child(format!("{}…", status_message)),
-                        ),
+                        .when_some(self.progress_percentage, |el, progress| {
+                            el.child(
+                                div()
+                                    .w_full()
+                                    .h_1()
+                                    .bg(cx.theme().colors().element_background)
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .w(relative(progress))
+                                            .bg(cx.theme().colors().element_selected),
+                                    ),
+                            )
+                        }),
                 )
             })
             .when_some(self.prompt.as_ref(), |el, prompt| {
@@ -533,6 +575,21 @@ impl RemoteClientDelegate {
             .update(cx, |_, _, cx| {
                 self.ui.update(cx, |modal, cx| {
                     modal.set_status(status.map(|s| s.to_string()), cx);
+                })
+            })
+            .ok();
+    }
+
+    fn update_status_with_progress(
+        &self,
+        status: Option<&str>,
+        progress: Option<f32>,
+        cx: &mut AsyncApp,
+    ) {
+        self.window
+            .update(cx, |_, _, cx| {
+                self.ui.update(cx, |modal, cx| {
+                    modal.set_status_with_progress(status.map(|s| s.to_string()), progress, cx);
                 })
             })
             .ok();
